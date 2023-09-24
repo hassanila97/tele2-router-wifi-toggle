@@ -1,41 +1,37 @@
 const puppeteer = require('puppeteer');
-const {ROUTER_LOGIN_URL, WIFI_CONFIG_PATH, USERNAME, PASSWORD, API_PORT} = require('./config');
+const {ROUTER_LOGIN_URL, WIFI_CONFIG_PATH, USERNAME, PASSWORD, API_PORT, HEADLESS} = require('./config');
 const express = require('express')
 const app = express()
 
 let browser;
 let page;
-let TASK_RUNNING = false;
+let firstLaunch = true;
 
 (async function startBrowser() {
 
+  browser = null;
+  page = null;
+
   browser = await puppeteer.launch({
-    headless: "new", // "new"
-    args: ['--start-maximized'],
-    defaultViewport: null
+    headless: HEADLESS ? "new" : false,
+    args: ['--start-maximized'], defaultViewport: null
   });
+
+  console.log('BROWSER STARTED')
+
+  if (firstLaunch) {
+    firstLaunch = false;
+    app.listen(API_PORT, (err) => {
+      if (err) throw err;
+
+      console.log('listening on port ' + API_PORT)
+    })
+  }
 
   browser.on('disconnected', () => {
     console.log('BROWSER DISCONNECTED, RESTARTING BROWSER')
     startBrowser()
   });
-
-  page = await (await browser.pages())[0];
-
-  await page.setRequestInterception(true);
-  page.on('request', request => {
-    if (request.resourceType() === 'image') {
-      request.abort();
-    } else {
-      request.continue();
-    }
-  });
-
-  app.listen(API_PORT, (err) => {
-    if (err) throw err;
-
-    console.log('listening on port ' + API_PORT)
-  })
 
 })();
 
@@ -43,56 +39,100 @@ app.get('/toggleWifi/:setStatus?', ({params: {setStatus}}, res) => {
 
   console.log('REQUEST RECEIVED, setStatus route parameter = ' + setStatus)
 
-  if (!setStatus || (setStatus.toLowerCase() !== 'on' && setStatus.toLowerCase() !== 'off')) {
-    return res.send('Invalid setStatus route parameter, expected on or off, example /toggleWifi/on')
+  if (setStatus && !['on', 'off'].includes(setStatus.toLowerCase())) {
+    return res.send('Invalid setStatus route parameter, expected (on, off or undefined), example /toggleWifi/on')
   }
 
-  if (TASK_RUNNING) {
-    const msg = 'ERROR: TASK ALREADY RUNNING';
+  if (page) {
+    const msg = 'ERROR: TASK ALREADY RUNNING (PAGE STILL OPEN)';
     console.error(msg)
     return res.send(msg)
   }
 
-  toggleWifi(setStatus).then(resp => {
+  toggleWifi(setStatus).then(async (resp) => {
+
     console.log(resp)
     console.log('')
-    res.send(resp)
-    TASK_RUNNING = false
-  }).catch(err => {
+    await page.close().then(() => {
+      page = null
+      res.send(resp)
+    }).catch((err) => {
+      console.error(err.message)
+      res.send(err.message)
+    });
+
+  }).catch(async (err) => {
+
     console.error(err)
     console.log('')
-    res.send(err)
-    TASK_RUNNING = false
+    await page.close().then(() => {
+      page = null
+      res.send(err)
+    }).catch((err) => {
+      console.error(err.message)
+      res.send(err.message)
+    });
   })
 })
 
 
 async function toggleWifi(setStatus) {
 
-  TASK_RUNNING = true
-
   return new Promise(async (resolve, reject) => {
 
     try {
 
+      let LOGGED_IN = false;
+
+      //page = await (await browser.pages())[0];
+      page = await browser.newPage();
+
+      await page.setRequestInterception(true);
+      page.on('request', request => {
+        if (request.resourceType() === 'image') {
+          request.abort();
+        } else {
+          request.continue();
+        }
+      });
+
       await page.goto(ROUTER_LOGIN_URL);
 
-      await page.waitForSelector('#user, #btn-logout', {timeout: 30000, visible: true});
+      await page.waitForSelector('#form-login, #btn-logout', {timeout: 30000, visible: true});
 
       if (await page.$('#btn-logout') === null) {
+
         console.log('LOGGING IN');
+
         await page.evaluate(() => {
-          document.getElementById("user").value = ''
-          document.getElementById("password").value = ''
+          document.querySelector("#user:not([disabled])").value = ''
+          document.querySelector("#password").value = ''
         })
 
         await page.type('#user', USERNAME);
         await page.type('#password', PASSWORD);
         await page.click('#form-login input[type=submit]');
-        await page.waitForNavigation({timeout: 30000});
+
+        await Promise.race([new Promise((resolve1, reject1) => {
+          page.waitForNavigation({timeout: 30000}).then(resolve1)
+            .catch(reject1)
+        }), new Promise((resolve1, reject1) => {
+          page.waitForSelector('#password.input-error', {
+            timeout: 29000,
+            visible: true
+          }).then(() => reject1('WRONG LOGIN USERNAME/PASSWORD'))
+            .catch((err) => LOGGED_IN ? resolve1() : reject1(err))
+        })]).catch(err => {
+          throw err
+        });
+
+        console.log('LOGGED IN')
+
       } else {
         console.log('ALREADY LOGGED IN')
       }
+
+      LOGGED_IN = true
 
       await page.goto(ROUTER_LOGIN_URL + WIFI_CONFIG_PATH);
       await page.waitForSelector('#enable-wifi-24', {timeout: 30000, visible: true});
@@ -103,7 +143,7 @@ async function toggleWifi(setStatus) {
 
       if (wifiStatus === 'UP') {
 
-        if (setStatus === 'off') {
+        if (!setStatus || setStatus === 'off') {
 
           console.log('TURNING OFF')
           await page.$eval('#enable-wifi-24', el => el.click())
@@ -122,7 +162,7 @@ async function toggleWifi(setStatus) {
 
       } else if (wifiStatus === 'DOWN') {
 
-        if (setStatus === 'on') {
+        if (!setStatus || setStatus === 'on') {
 
           console.log('TURNING ON')
           await page.$eval('#enable-wifi-24', el => el.click())
@@ -138,7 +178,6 @@ async function toggleWifi(setStatus) {
           resolve('WIFI ALREADY OFF')
 
         }
-
 
       } else {
 
