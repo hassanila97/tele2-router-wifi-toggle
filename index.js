@@ -193,3 +193,14 @@ async function toggleWifi(setStatus) {
   })
 
 }
+
+process.on('SIGHUP', closeBrowser)
+process.on('SIGINT', closeBrowser);
+
+function closeBrowser() {
+  console.log("Closing browser");
+
+  browser.off('disconnected')
+
+  browser.close().catch(err => console.log("Error while closing browser", err)).finally(() => process.exit())
+}
