@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer');
-const {ROUTER_LOGIN_URL, WIFI_CONFIG_PATH, USERNAME, PASSWORD, API_PORT, HEADLESS} = require('./config');
+require('dotenv').config();
+const {ROUTER_LOGIN_URL, WIFI_CONFIG_PATH, USERNAME, PASSWORD, API_PORT, HEADLESS} = process.env;
 const express = require('express')
 const app = express()
 
