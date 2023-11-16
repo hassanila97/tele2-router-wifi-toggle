@@ -1,6 +1,6 @@
 const puppeteer = require('puppeteer');
 require('dotenv').config();
-const {ROUTER_LOGIN_URL, WIFI_CONFIG_PATH, USERNAME, PASSWORD, API_PORT, HEADLESS} = process.env;
+const {ROUTER_LOGIN_URL, WIFI_CONFIG_PATH, LOGIN_USERNAME, LOGIN_PASSWORD, API_PORT, HEADLESS} = process.env;
 const express = require('express')
 const app = express()
 
@@ -110,8 +110,8 @@ async function toggleWifi(setStatus) {
           document.querySelector("#password").value = ''
         })
 
-        await page.type('#user', USERNAME);
-        await page.type('#password', PASSWORD);
+        await page.type('#user', LOGIN_USERNAME);
+        await page.type('#password', LOGIN_PASSWORD);
         await page.click('#form-login input[type=submit]');
 
         await Promise.race([new Promise((resolve1, reject1) => {
